@@ -1,0 +1,9 @@
+.git
+.github
+.cursor
+.env
+*.tfstate
+*.tfstate.*
+*.tfvars
+infra/**/.terraform
+README.md

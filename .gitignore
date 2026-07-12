@@ -27,6 +27,20 @@ go.work.sum
 # env file
 .env
 
+# OpenTofu
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Local tunnel output
+cloudflared.log
+
+# Python
+__pycache__/
+*.pyc
+
 # Editor/IDE
 # .idea/
 # .vscode/

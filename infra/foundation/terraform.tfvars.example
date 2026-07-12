@@ -1,0 +1,2 @@
+project_id = "your-google-cloud-project"
+region     = "us-central1"
