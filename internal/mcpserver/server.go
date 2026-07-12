@@ -399,25 +399,47 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 	}
 
 	totals := make(map[string]nutrientTotal)
+	summaryTotals := make(map[string]nutrientTotal)
 	var builder strings.Builder
 	if input.ShowFoods {
 		builder.WriteString("### Foods\n")
 	}
 	for _, food := range nutrition.Foods {
 		values := make(map[string]string)
+		type headlineCandidate struct {
+			total    nutrientTotal
+			priority int
+		}
+		headlines := make(map[string]headlineCandidate)
 		for _, nutrient := range food.Nutrients {
 			amount, err := decimal.NewFromString(nutrient.Amount)
 			if err != nil {
 				return nil, RenderOutput{}, fmt.Errorf("invalid normalized amount for %s", nutrient.Name)
 			}
-			key := nutrientKey(nutrient)
+			key := exactNutrientKey(nutrient)
 			current := totals[key]
 			current.name, current.unit, current.amount = nutrient.Name, nutrient.Unit, current.amount.Add(amount)
 			totals[key] = current
+
 			category := classifyNutrient(nutrient.Name)
-			if category != "calories" || canonicalUnit(nutrient.Unit) == "kcal" {
-				values[category] = rounded(amount)
+			priority := headlineNutrientPriority(nutrient.Name, category)
+			if priority == 0 || (category == "calories" && canonicalUnit(nutrient.Unit) != "kcal") {
+				continue
 			}
+			if candidate, ok := headlines[category]; !ok || priority > candidate.priority {
+				headlines[category] = headlineCandidate{
+					total:    nutrientTotal{name: nutrient.Name, unit: nutrient.Unit, amount: amount},
+					priority: priority,
+				}
+			}
+		}
+		for category, candidate := range headlines {
+			values[category] = rounded(candidate.total.amount)
+			key := nutrientKey(Nutrient{Name: candidate.total.name, Unit: candidate.total.unit})
+			current := summaryTotals[key]
+			current.name, current.unit = candidate.total.name, candidate.total.unit
+			current.amount = current.amount.Add(candidate.total.amount)
+			summaryTotals[key] = current
 		}
 		if input.ShowFoods {
 			fmt.Fprintf(&builder, "- **%s:** %s %s · %s kcal · Protein %s g · Carbs %s g · Fat %s g · Fiber %s g\n",
@@ -442,8 +464,12 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 		return nil, RenderOutput{Markdown: builder.String()}, nil
 	}
 
-	ordered := make([]nutrientTotal, 0, len(totals))
-	for _, value := range totals {
+	renderTotals := totals
+	if input.Detail != "selected" {
+		renderTotals = summaryTotals
+	}
+	ordered := make([]nutrientTotal, 0, len(renderTotals))
+	for _, value := range renderTotals {
 		if shouldRenderNutrient(value.name, value.unit, input.Detail, input.Nutrients) {
 			ordered = append(ordered, value)
 		}
@@ -626,6 +652,10 @@ func sameUnit(left, right string) bool {
 	return canonicalUnit(left) == canonicalUnit(right)
 }
 
+func exactNutrientKey(value Nutrient) string {
+	return strings.ToLower(strings.TrimSpace(value.Name)) + "|" + canonicalUnit(value.Unit)
+}
+
 func nutrientKey(value Nutrient) string {
 	name := strings.ToLower(strings.TrimSpace(value.Name))
 	switch {
@@ -646,7 +676,7 @@ func nutrientKey(value Nutrient) string {
 func classifyNutrient(name string) string {
 	name = strings.ToLower(name)
 	switch {
-	case strings.Contains(name, "energy"):
+	case strings.Contains(name, "energy") || strings.Contains(name, "calorie"):
 		return "calories"
 	case strings.Contains(name, "protein"):
 		return "protein"
@@ -658,6 +688,42 @@ func classifyNutrient(name string) string {
 		return "fiber"
 	default:
 		return ""
+	}
+}
+
+func headlineNutrientPriority(name, category string) int {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch category {
+	case "calories":
+		if name == "energy" || name == "calories" {
+			return 3
+		}
+		return 1
+	case "carbs":
+		if name == "carbohydrate, by difference" {
+			return 3
+		}
+		if name == "carbohydrate, by summation" {
+			return 2
+		}
+		return 1
+	case "fat":
+		if name == "total lipid (fat)" {
+			return 3
+		}
+		return 1
+	case "fiber":
+		if name == "fiber, total dietary" {
+			return 3
+		}
+		if name == "fiber" {
+			return 2
+		}
+		return 0
+	case "protein":
+		return 1
+	default:
+		return 0
 	}
 }
 
