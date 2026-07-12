@@ -88,7 +88,7 @@ func (s *Service) addTools(server *mcp.Server) {
 	}, s.normalizeNutrition)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "render_nutrition_table",
-		Description: "Deterministically total normalized foods and render food, macro, calorie, and micronutrient Markdown tables. Call this after normalize_nutrition.",
+		Description: "Deterministically render a concise summary, selected nutrients, or a full breakdown from a normalized report. Full detail and food rows must only be requested when the user explicitly asks for them.",
 	}, s.renderNutritionTable)
 }
 
@@ -359,7 +359,9 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 	}
 	totals := make(map[string]total)
 	var builder strings.Builder
-	builder.WriteString("### Foods\n| Food | Amount | Calories | Protein | Carbs | Fat | Fiber |\n|---|---:|---:|---:|---:|---:|---:|\n")
+	if input.ShowFoods {
+		builder.WriteString("### Foods\n")
+	}
 	for _, food := range nutrition.Foods {
 		values := make(map[string]string)
 		for _, nutrient := range food.Nutrients {
@@ -376,10 +378,12 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 				values[category] = rounded(amount)
 			}
 		}
-		fmt.Fprintf(&builder, "| %s | %s %s | %s | %s | %s | %s | %s |\n",
-			escapeCell(food.Name), food.ConsumedAmount, food.ConsumedUnit,
-			valueOrDash(values["calories"]), valueOrDash(values["protein"]), valueOrDash(values["carbs"]),
-			valueOrDash(values["fat"]), valueOrDash(values["fiber"]))
+		if input.ShowFoods {
+			fmt.Fprintf(&builder, "- **%s:** %s %s · %s kcal · Protein %s g · Carbs %s g · Fat %s g · Fiber %s g\n",
+				escapeCell(food.Name), food.ConsumedAmount, food.ConsumedUnit,
+				valueOrDash(values["calories"]), valueOrDash(values["protein"]), valueOrDash(values["carbs"]),
+				valueOrDash(values["fat"]), valueOrDash(values["fiber"]))
+		}
 	}
 
 	goals := make(map[string]decimal.Decimal)
@@ -391,25 +395,52 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 	}
 	ordered := make([]total, 0, len(totals))
 	for _, value := range totals {
-		ordered = append(ordered, value)
+		if shouldRenderNutrient(value.name, value.unit, input.Detail, input.Nutrients) {
+			ordered = append(ordered, value)
+		}
 	}
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].name < ordered[j].name })
 
-	builder.WriteString("\n### Nutrient totals\n| Nutrient | Total | Goal | Progress |\n|---|---:|---:|---:|\n")
+	if input.ShowFoods {
+		builder.WriteString("\n")
+	}
+	if input.Detail == "full" {
+		builder.WriteString("### Full nutrient breakdown\n")
+	} else {
+		builder.WriteString("### Nutrition summary\n")
+	}
 	for _, value := range ordered {
 		goal, ok := goals[nutrientKey(Nutrient{Name: value.name, Unit: value.unit})]
-		goalText, progress := "—", "—"
+		suffix := ""
 		if ok && !goal.IsZero() {
-			goalText = rounded(goal) + " " + value.unit
-			progress = value.amount.Div(goal).Mul(decimal.NewFromInt(100)).Round(0).String() + "%"
+			progress := value.amount.Div(goal).Mul(decimal.NewFromInt(100)).Round(0).String()
+			suffix = fmt.Sprintf(" / %s %s (%s%%)", rounded(goal), value.unit, progress)
 		}
-		fmt.Fprintf(&builder, "| %s | %s %s | %s | %s |\n",
-			escapeCell(value.name), rounded(value.amount), value.unit, goalText, progress)
+		fmt.Fprintf(&builder, "- **%s:** %s %s%s\n",
+			escapeCell(value.name), rounded(value.amount), value.unit, suffix)
 	}
 	for _, warning := range nutrition.Warnings {
 		fmt.Fprintf(&builder, "\n- Data warning: %s", warning)
 	}
 	return nil, RenderOutput{Markdown: builder.String()}, nil
+}
+
+func shouldRenderNutrient(name, unit, detail string, selected []string) bool {
+	switch detail {
+	case "full":
+		return true
+	case "selected":
+		name = strings.ToLower(name)
+		for _, requested := range selected {
+			if strings.Contains(name, strings.ToLower(strings.TrimSpace(requested))) {
+				return true
+			}
+		}
+		return false
+	default:
+		category := classifyNutrient(name)
+		return category != "" && (category != "calories" || canonicalUnit(unit) == "kcal")
+	}
 }
 
 func canonicalUnit(value string) string {

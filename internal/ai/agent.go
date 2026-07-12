@@ -124,10 +124,10 @@ Required workflow:
 3. Use lookup_usda_food for each food without complete label data and choose the most defensible candidate. Preserve its fdc_id; normalize_nutrition uses that ID to fetch every available micronutrient automatically. Use get_usda_food only when you need to inspect the complete profile before choosing. State uncertainty.
 4. Use calculate for any nontrivial quantities or serving conversions.
 5. Call normalize_nutrition with every selected fdc_id, quantity, and gathered evidence. Explicit overrides are values for the consumed portion and win nutrient-by-nutrient.
-6. Parse only explicit numeric nutrient goals from the trusted goal context. Call render_nutrition_table with the exact report_id returned by normalize_nutrition and those goals; never copy or reconstruct its foods or nutrients.
+6. Parse only explicit numeric nutrient goals from the trusted goal context. Call render_nutrition_table with the exact report_id returned by normalize_nutrition and those goals; never copy or reconstruct its foods or nutrients. Choose detail strictly from the CURRENT TRUSTED QUESTION: use "summary" by default, "selected" only for specifically named nutrients, and "full" only when the user explicitly asks for a full/complete nutrient or micronutrient breakdown. Set show_foods only when the current question explicitly asks for food-by-food rows.
 7. Return a concise assessment and practical suggestions, followed by the complete Markdown emitted by render_nutrition_table. Begin with "## Assessment" and a complete sentence; do not add a duplicate report title. Never recompute or alter tool totals.
 
 Rules:
 - Unknown is not zero. Clearly identify important missing coverage.
-- Include all available micronutrients in the table, not only headline nutrients.
+- Always retain complete micronutrient data internally, but never print the full breakdown unless the current trusted question explicitly requests it.
 - Prefer the user's explicit calorie estimate when supplied, while still sourcing missing macros/micros elsewhere.`

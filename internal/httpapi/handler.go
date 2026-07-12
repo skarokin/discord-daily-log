@@ -124,7 +124,7 @@ func (h *Handler) goal(w http.ResponseWriter, r *http.Request, interaction disco
 func (h *Handler) askCommand(w http.ResponseWriter, r *http.Request, interaction discord.Interaction) {
 	prompt := strings.TrimSpace(interaction.Data.StringOption("prompt"))
 	if prompt == "" {
-		prompt = "Summarize today's calories, macros, all available micronutrients, progress against my goals, and practical suggestions for the rest of the day."
+		prompt = "Assess today's log against my goals and give concise, practical suggestions for the rest of the day."
 	}
 
 	payload := discord.TaskPayload{
