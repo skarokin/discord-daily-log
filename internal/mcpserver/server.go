@@ -40,6 +40,52 @@ type Service struct {
 	reports    map[string]cachedNutritionReport
 }
 
+type nutrientTotal struct {
+	name   string
+	unit   string
+	amount decimal.Decimal
+}
+
+type essentialMicronutrient struct {
+	key   string
+	name  string
+	group string
+}
+
+var essentialMicronutrients = []essentialMicronutrient{
+	{"vitamin_a", "Vitamin A", "Vitamins"},
+	{"vitamin_b1", "Vitamin B1 (Thiamine)", "Vitamins"},
+	{"vitamin_b2", "Vitamin B2 (Riboflavin)", "Vitamins"},
+	{"vitamin_b3", "Vitamin B3 (Niacin)", "Vitamins"},
+	{"vitamin_b5", "Vitamin B5 (Pantothenic acid)", "Vitamins"},
+	{"vitamin_b6", "Vitamin B6", "Vitamins"},
+	{"vitamin_b7", "Vitamin B7 (Biotin)", "Vitamins"},
+	{"vitamin_b9", "Vitamin B9 (Folate)", "Vitamins"},
+	{"vitamin_b12", "Vitamin B12", "Vitamins"},
+	{"vitamin_c", "Vitamin C", "Vitamins"},
+	{"vitamin_d", "Vitamin D", "Vitamins"},
+	{"vitamin_e", "Vitamin E", "Vitamins"},
+	{"vitamin_k", "Vitamin K", "Vitamins"},
+	{"calcium", "Calcium", "Macrominerals"},
+	{"phosphorus", "Phosphorus", "Macrominerals"},
+	{"magnesium", "Magnesium", "Macrominerals"},
+	{"sodium", "Sodium", "Macrominerals"},
+	{"potassium", "Potassium", "Macrominerals"},
+	{"chloride", "Chloride", "Macrominerals"},
+	{"sulfur", "Sulfur", "Macrominerals"},
+	{"iron", "Iron", "Trace minerals"},
+	{"zinc", "Zinc", "Trace minerals"},
+	{"iodine", "Iodine", "Trace minerals"},
+	{"selenium", "Selenium", "Trace minerals"},
+	{"copper", "Copper", "Trace minerals"},
+	{"manganese", "Manganese", "Trace minerals"},
+	{"fluoride", "Fluoride", "Trace minerals"},
+	{"chromium", "Chromium", "Trace minerals"},
+	{"molybdenum", "Molybdenum", "Trace minerals"},
+	{"boron", "Boron", "Trace minerals"},
+	{"cobalt", "Cobalt", "Trace minerals"},
+}
+
 func New(ctx context.Context, usdaKey string) (*Bundle, error) {
 	service := &Service{
 		usdaKey: usdaKey,
@@ -88,7 +134,7 @@ func (s *Service) addTools(server *mcp.Server) {
 	}, s.normalizeNutrition)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "render_nutrition_table",
-		Description: "Deterministically render a concise summary, selected nutrients, or a full breakdown from a normalized report. Full detail and food rows must only be requested when the user explicitly asks for them.",
+		Description: "Deterministically render a concise summary, selected nutrients, or a grouped breakdown of the 13 essential vitamins, 7 macrominerals, and 11 trace minerals. Full detail and food rows must only be requested when explicitly asked for.",
 	}, s.renderNutritionTable)
 }
 
@@ -352,12 +398,7 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 		return nil, RenderOutput{}, fmt.Errorf("report_id is required")
 	}
 
-	type total struct {
-		name   string
-		unit   string
-		amount decimal.Decimal
-	}
-	totals := make(map[string]total)
+	totals := make(map[string]nutrientTotal)
 	var builder strings.Builder
 	if input.ShowFoods {
 		builder.WriteString("### Foods\n")
@@ -393,7 +434,15 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 			goals[nutrientKey(Nutrient{Name: goal.Name, Unit: goal.Unit})] = amount
 		}
 	}
-	ordered := make([]total, 0, len(totals))
+	if input.Detail == "full" {
+		renderEssentialMicronutrients(&builder, totals)
+		for _, warning := range nutrition.Warnings {
+			fmt.Fprintf(&builder, "\n- Data warning: %s", warning)
+		}
+		return nil, RenderOutput{Markdown: builder.String()}, nil
+	}
+
+	ordered := make([]nutrientTotal, 0, len(totals))
 	for _, value := range totals {
 		if shouldRenderNutrient(value.name, value.unit, input.Detail, input.Nutrients) {
 			ordered = append(ordered, value)
@@ -404,11 +453,7 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 	if input.ShowFoods {
 		builder.WriteString("\n")
 	}
-	if input.Detail == "full" {
-		builder.WriteString("### Full nutrient breakdown\n")
-	} else {
-		builder.WriteString("### Nutrition summary\n")
-	}
+	builder.WriteString("### Nutrition summary\n")
 	for _, value := range ordered {
 		goal, ok := goals[nutrientKey(Nutrient{Name: value.name, Unit: value.unit})]
 		suffix := ""
@@ -425,10 +470,128 @@ func (s *Service) renderNutritionTable(_ context.Context, _ *mcp.CallToolRequest
 	return nil, RenderOutput{Markdown: builder.String()}, nil
 }
 
+func renderEssentialMicronutrients(builder *strings.Builder, totals map[string]nutrientTotal) {
+	type selectedTotal struct {
+		total    nutrientTotal
+		priority int
+	}
+	selected := make(map[string]selectedTotal)
+	for _, total := range totals {
+		key, priority, ok := essentialMicronutrientMatch(total.name)
+		if !ok {
+			continue
+		}
+		current, exists := selected[key]
+		if !exists || priority > current.priority {
+			selected[key] = selectedTotal{total: total, priority: priority}
+		}
+	}
+
+	if builder.Len() > 0 {
+		builder.WriteString("\n")
+	}
+	builder.WriteString("### Essential micronutrients\n")
+	group := ""
+	for _, nutrient := range essentialMicronutrients {
+		if nutrient.group != group {
+			if group != "" {
+				builder.WriteString("\n")
+			}
+			group = nutrient.group
+			fmt.Fprintf(builder, "**%s**\n", group)
+		}
+		value, ok := selected[nutrient.key]
+		if !ok {
+			fmt.Fprintf(builder, "- **%s:** unavailable\n", nutrient.name)
+			continue
+		}
+		fmt.Fprintf(builder, "- **%s:** %s %s\n",
+			nutrient.name, rounded(value.total.amount), value.total.unit)
+	}
+}
+
+func essentialMicronutrientMatch(rawName string) (string, int, bool) {
+	name := strings.ToLower(strings.TrimSpace(rawName))
+	switch {
+	case name == "vitamin a, rae":
+		return "vitamin_a", 3, true
+	case name == "vitamin a, iu":
+		return "vitamin_a", 2, true
+	case name == "thiamin":
+		return "vitamin_b1", 1, true
+	case name == "riboflavin":
+		return "vitamin_b2", 1, true
+	case name == "niacin":
+		return "vitamin_b3", 1, true
+	case name == "pantothenic acid":
+		return "vitamin_b5", 1, true
+	case name == "vitamin b-6":
+		return "vitamin_b6", 1, true
+	case name == "biotin":
+		return "vitamin_b7", 1, true
+	case name == "folate, dfe":
+		return "vitamin_b9", 3, true
+	case name == "folate, total":
+		return "vitamin_b9", 2, true
+	case name == "folate, food":
+		return "vitamin_b9", 1, true
+	case name == "vitamin b-12":
+		return "vitamin_b12", 1, true
+	case name == "vitamin c, total ascorbic acid":
+		return "vitamin_c", 1, true
+	case name == "vitamin d (d2 + d3)":
+		return "vitamin_d", 3, true
+	case name == "vitamin d (d2 + d3), international units":
+		return "vitamin_d", 2, true
+	case name == "vitamin e (alpha-tocopherol)":
+		return "vitamin_e", 1, true
+	case name == "vitamin k (phylloquinone)":
+		return "vitamin_k", 3, true
+	case name == "vitamin k (menaquinone-4)":
+		return "vitamin_k", 2, true
+	case strings.HasPrefix(name, "calcium"):
+		return "calcium", 1, true
+	case strings.HasPrefix(name, "phosphorus"):
+		return "phosphorus", 1, true
+	case strings.HasPrefix(name, "magnesium"):
+		return "magnesium", 1, true
+	case strings.HasPrefix(name, "sodium"):
+		return "sodium", 1, true
+	case strings.HasPrefix(name, "potassium"):
+		return "potassium", 1, true
+	case strings.HasPrefix(name, "chloride"):
+		return "chloride", 1, true
+	case strings.HasPrefix(name, "sulfur"):
+		return "sulfur", 1, true
+	case strings.HasPrefix(name, "iron"):
+		return "iron", 1, true
+	case strings.HasPrefix(name, "zinc"):
+		return "zinc", 1, true
+	case strings.HasPrefix(name, "iodine"):
+		return "iodine", 1, true
+	case strings.HasPrefix(name, "selenium"):
+		return "selenium", 1, true
+	case strings.HasPrefix(name, "copper"):
+		return "copper", 1, true
+	case strings.HasPrefix(name, "manganese"):
+		return "manganese", 1, true
+	case strings.HasPrefix(name, "fluoride"):
+		return "fluoride", 1, true
+	case strings.HasPrefix(name, "chromium"):
+		return "chromium", 1, true
+	case strings.HasPrefix(name, "molybdenum"):
+		return "molybdenum", 1, true
+	case strings.HasPrefix(name, "boron"):
+		return "boron", 1, true
+	case strings.HasPrefix(name, "cobalt"):
+		return "cobalt", 1, true
+	default:
+		return "", 0, false
+	}
+}
+
 func shouldRenderNutrient(name, unit, detail string, selected []string) bool {
 	switch detail {
-	case "full":
-		return true
 	case "selected":
 		name = strings.ToLower(name)
 		for _, requested := range selected {

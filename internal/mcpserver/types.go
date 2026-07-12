@@ -87,7 +87,7 @@ type RenderInput struct {
 	ReportID  string           `json:"report_id" jsonschema:"Request-scoped report ID returned by normalize_nutrition."`
 	Nutrition *NormalizeOutput `json:"nutrition,omitempty" jsonschema:"Optional direct model for compatibility; prefer report_id."`
 	Goals     []NutrientGoal   `json:"goals,omitempty" jsonschema:"Numeric goals parsed from the trusted natural-language goal prompt. Omit goals that are not explicit."`
-	Detail    string           `json:"detail" jsonschema:"Output detail: summary for calories/macros/fiber, selected for requested nutrients, or full only when explicitly requested."`
+	Detail    string           `json:"detail" jsonschema:"Output detail: summary for calories/macros/fiber, selected for requested nutrients, or full for the essential vitamins and minerals only when explicitly requested."`
 	Nutrients []string         `json:"nutrients,omitempty" jsonschema:"Nutrient names to include when detail is selected."`
 	ShowFoods bool             `json:"show_foods,omitempty" jsonschema:"Include food-by-food rows only when the user asks for them."`
 }
